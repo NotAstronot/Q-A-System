@@ -1,0 +1,21 @@
+# Environment variables (secrets)
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated vector store
+chroma_db/
+
+# User documents (potentially sensitive)
+documents/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
