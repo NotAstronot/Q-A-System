@@ -1,11 +1,12 @@
 """Document ingestion module using PyPDF and ChromaDB."""
 
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.documents import Document
 
 from config import (
     CHUNK_SIZE,
@@ -30,7 +31,7 @@ class DocumentIngestor:
         )
         self.vectorstore = None
 
-    def load_pdf(self, pdf_path: str) -> List[Dict[str, Any]]:
+    def load_pdf(self, pdf_path: str) -> List[Document]:
         """Load PDF and extract text with metadata."""
         loader = PyPDFLoader(pdf_path)
         documents = loader.load()
@@ -39,7 +40,7 @@ class DocumentIngestor:
             doc.metadata["filename"] = Path(pdf_path).name
         return documents
 
-    def chunk_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
         """Split documents into smaller chunks for embedding."""
         chunks = self.text_splitter.split_documents(documents)
         for i, chunk in enumerate(chunks):
@@ -48,6 +49,13 @@ class DocumentIngestor:
 
     def ingest_pdf(self, pdf_path: str) -> int:
         """Full pipeline: load PDF -> chunk -> store in ChromaDB."""
+        filename = Path(pdf_path).name
+
+        if self.vectorstore is not None:
+            existing = self.vectorstore.get(where={"filename": filename})
+            if existing and existing.get('ids'):
+                self.vectorstore.delete(ids=existing['ids'])
+
         documents = self.load_pdf(pdf_path)
         chunks = self.chunk_documents(documents)
 
@@ -63,7 +71,7 @@ class DocumentIngestor:
 
         return len(chunks)
 
-    def ingest_directory(self, dir_path: str) -> Dict[str, int]:
+    def ingest_directory(self, dir_path: str) -> dict:
         """Ingest all PDFs in a directory."""
         results = {}
         pdf_files = list(Path(dir_path).glob("*.pdf"))

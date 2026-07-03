@@ -1,6 +1,9 @@
 # Environment variables (secrets)
 .env
 
+# API (sensitive endpoints)
+api.py
+
 # Python
 __pycache__/
 *.pyc
@@ -16,6 +19,14 @@ documents/
 .vscode/
 .idea/
 
+# Logs
+*.log
+
 # OS
 Thumbs.db
 Desktop.ini
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

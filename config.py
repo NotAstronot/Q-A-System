@@ -17,6 +17,9 @@ CHROMA_DB_DIR.mkdir(exist_ok=True)
 
 # LLM Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+if not OPENROUTER_API_KEY:
+    import warnings
+    warnings.warn("OPENROUTER_API_KEY is not set. LLM queries will fail.")
 LLM_MODEL = os.getenv("LLM_MODEL", "mimollm/mimo-v2.5-free")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
@@ -35,3 +38,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 # Citation Settings
 MIN_CITATION_COUNT = int(os.getenv("MIN_CITATION_COUNT", "1"))
 CITATION_FORMAT = "[Sumber: {filename}, Halaman {page}]"
+
+# API Settings
+API_KEY = os.getenv("API_KEY", "")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")

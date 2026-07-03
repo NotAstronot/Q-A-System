@@ -12,7 +12,6 @@ from config import (
     OPENROUTER_API_KEY,
     LLM_MODEL,
     LLM_BASE_URL,
-    CITATION_FORMAT,
     MIN_CITATION_COUNT,
 )
 
@@ -111,19 +110,9 @@ Jawab dengan selalu menyertakan sumber/sitasi dokumen."""
             ("human", self.USER_PROMPT),
         ])
 
-        def format_docs(docs):
-            formatted = []
-            for doc in docs:
-                source = doc.metadata.get("filename", "unknown")
-                page = doc.metadata.get("page", 0) + 1
-                formatted.append(
-                    f"[Dokumen: {source}, Halaman {page}]\n{doc.page_content}"
-                )
-            return "\n\n".join(formatted)
-
         chain = (
             {
-                "context": self.retriever | format_docs,
+                "context": RunnablePassthrough(),
                 "question": RunnablePassthrough(),
             }
             | prompt
@@ -132,14 +121,36 @@ Jawab dengan selalu menyertakan sumber/sitasi dokumen."""
         )
         return chain
 
+    def _format_docs(self, docs: List[Document]) -> str:
+        """Format documents with source and page metadata."""
+        formatted = []
+        for doc in docs:
+            source = doc.metadata.get("filename", "unknown")
+            page = doc.metadata.get("page", 0) + 1
+            formatted.append(
+                f"[Dokumen: {source}, Halaman {page}]\n{doc.page_content}"
+            )
+        return "\n\n".join(formatted)
+
     def query(self, question: str) -> Dict[str, Any]:
         """Execute query with citation validation and retry if needed."""
-        MAX_RETRIES = 2
+        MAX_ATTEMPTS = 3
 
-        for attempt in range(MAX_RETRIES):
-            raw_response = self.chain.invoke(question)
-
+        for attempt in range(MAX_ATTEMPTS):
             source_docs = self.retriever.invoke(question)
+            context = self._format_docs(source_docs)
+
+            if attempt == MAX_ATTEMPTS - 1:
+                question_text = (
+                    f"Jawaban sebelumnya kurang lengkap dalam menyertakan sitasi.\n"
+                    f"Silakan jawab ulang pertanyaan berikut dengan format sitasi yang benar:\n"
+                    f"[Sumber: nama_file.pdf, Halaman X]\n\n"
+                    f"Pertanyaan: {question}"
+                )
+            else:
+                question_text = question
+
+            raw_response = self.chain.invoke({"context": context, "question": question_text})
             validation = self.validator.validate(raw_response, source_docs)
 
             if validation["valid"]:
@@ -150,19 +161,9 @@ Jawab dengan selalu menyertakan sumber/sitasi dokumen."""
                     "attempts": attempt + 1,
                 }
 
-        retry_prompt = (
-            f"Jawaban sebelumnya kurang lengkap dalam menyertakan sitasi.\n"
-            f"Silakan jawab ulang pertanyaan berikut dengan format sitasi yang benar:\n"
-            f"[Sumber: nama_file.pdf, Halaman X]\n\n"
-            f"Pertanyaan: {question}"
-        )
-        final_response = self.chain.invoke(retry_prompt)
-        source_docs = self.retriever.invoke(question)
-        validation = self.validator.validate(final_response, source_docs)
-
         return {
-            "answer": final_response,
+            "answer": raw_response,
             "sources": source_docs,
             "validation": validation,
-            "attempts": MAX_RETRIES + 1,
+            "attempts": MAX_ATTEMPTS,
         }
