@@ -52,3 +52,7 @@ export async function getDocuments() {
 export async function healthCheck() {
   return request('/health')
 }
+
+export async function getFeatures() {
+  return request('/features')
+}

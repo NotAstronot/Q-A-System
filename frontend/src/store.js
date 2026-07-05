@@ -1,10 +1,11 @@
 import { create } from 'zustand'
-import { queryDocuments, uploadDocument, getStats, getDocuments } from './api'
+import { queryDocuments, uploadDocument, getStats, getDocuments, getFeatures } from './api'
 
 const useStore = create((set, get) => ({
   messages: [],
   documents: [],
   stats: null,
+  features: null,
   isLoading: false,
   isUploading: false,
   error: null,
@@ -26,6 +27,7 @@ const useStore = create((set, get) => ({
         id: crypto.randomUUID(),
         role: 'ai',
         content: result.answer,
+        rewritten_query: result.rewritten_query,
         sources: result.sources,
         validation: result.validation,
         attempts: result.attempts,
@@ -80,6 +82,15 @@ const useStore = create((set, get) => ({
       set({ stats: result })
     } catch (err) {
       set({ error: err.message })
+    }
+  },
+
+  fetchFeatures: async () => {
+    try {
+      const result = await getFeatures()
+      set({ features: result })
+    } catch {
+      // feature endpoint optional
     }
   },
 

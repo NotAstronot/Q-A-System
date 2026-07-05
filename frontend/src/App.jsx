@@ -7,11 +7,12 @@ import UploadForm from './components/UploadForm'
 import StatsPanel from './components/StatsPanel'
 
 export default function App() {
-  const { activePage, fetchDocuments, fetchStats, error, clearError } = useStore()
+  const { activePage, fetchDocuments, fetchStats, fetchFeatures, error, clearError } = useStore()
 
   useEffect(() => {
     fetchDocuments()
     fetchStats()
+    fetchFeatures()
   }, [])
 
   return (

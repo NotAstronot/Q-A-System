@@ -1,4 +1,4 @@
-"""CLI interface for Internal Q&A System."""
+"""CLI interface for Advanced RAG System."""
 
 import sys
 from pathlib import Path
@@ -9,17 +9,37 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from ingestion import DocumentIngestor
+from retrieval import HybridRetriever, BM25Retriever, Reranker
 from chain import RAGChain
-from config import DOCUMENTS_DIR
+from config import (
+    DOCUMENTS_DIR,
+    LLM_PROVIDER,
+    RERANKER_MODEL,
+    RERANKING_ENABLED,
+    HYBRID_SEARCH_ENABLED,
+    QUERY_REWRITING_ENABLED,
+    TABLE_PARSING_ENABLED,
+)
 
 console = Console()
 
 
 def print_header():
+    features = []
+    if HYBRID_SEARCH_ENABLED:
+        features.append("Hybrid Search")
+    if RERANKING_ENABLED:
+        features.append("Reranker")
+    if QUERY_REWRITING_ENABLED:
+        features.append("Query Rewriting")
+    if TABLE_PARSING_ENABLED:
+        features.append("Table Parsing")
+
     console.print(
         Panel.fit(
-            "[bold cyan]Internal Q&A System[/bold cyan]\n"
-            "[dim]Powered by Mimo V2.5 + LangChain + ChromaDB[/dim]",
+            "[bold cyan]Advanced RAG System[/bold cyan]\n"
+            f"[dim]Provider: {LLM_PROVIDER} | "
+            f"Features: {', '.join(features)}[/dim]",
             border_style="cyan",
         )
     )
@@ -38,9 +58,9 @@ def ingest_command(ingestor: DocumentIngestor):
     results = ingestor.ingest_directory(str(DOCUMENTS_DIR))
     total_chunks = sum(v for v in results.values() if v > 0)
 
-    table = Table(title="Ingestion Results")
+    table = Table(title="Ingestion Results (Parent-Child Chunking)")
     table.add_column("File", style="cyan")
-    table.add_column("Chunks", style="green", justify="right")
+    table.add_column("Child Chunks", style="green", justify="right")
     table.add_column("Status", style="yellow")
 
     for filename, count in results.items():
@@ -48,11 +68,13 @@ def ingest_command(ingestor: DocumentIngestor):
         table.add_row(filename, str(count) if count > 0 else "-", status)
 
     console.print(table)
-    console.print(f"\n[bold green]Total chunks created: {total_chunks}[/bold green]")
+    console.print(f"\n[bold green]Total child chunks created: {total_chunks}[/bold green]")
+    console.print("[dim]BM25 index built automatically.[/dim]")
 
 
 def query_command(chain: RAGChain, ingestor: DocumentIngestor):
     console.print("\n[bold cyan]Interactive Q&A Mode[/bold cyan]")
+    console.print(f"[dim]Provider: {LLM_PROVIDER}[/dim]")
     console.print("[dim]Type 'exit' to quit, 'help' for commands[/dim]\n")
 
     while True:
@@ -69,41 +91,54 @@ def query_command(chain: RAGChain, ingestor: DocumentIngestor):
         if question.lower() == "help":
             console.print(
                 "[dim]Commands:\n"
-                "  help  - Show this help\n"
-                "  stats - Show ingestion stats\n"
-                "  exit  - Quit the program[/dim]"
+                "  help   - Show this help\n"
+                "  stats  - Show ingestion stats\n"
+                "  config - Show current configuration\n"
+                "  exit   - Quit the program[/dim]"
             )
             continue
 
         if question.lower() == "stats":
-            if ingestor.vectorstore is not None:
-                collection = ingestor.vectorstore._collection
-                console.print(f"\n[bold cyan]Statistik Ingestion:[/bold cyan]")
-                console.print(f"  Collection: [green]{collection.name}[/green]")
-                console.print(f"  Total chunks: [green]{collection.count()}[/green]")
-                console.print(f"  Dokumen: [green]{DOCUMENTS_DIR}[/green]\n")
-            else:
-                console.print("[yellow]Belum ada data yang di-ingest. Jalankan 'python main.py ingest' terlebih dahulu.[/yellow]\n")
+            vectorstore = ingestor.get_vectorstore()
+            collection = vectorstore._collection
+            corpus, _ = ingestor.get_bm25_data()
+            console.print(f"\n[bold cyan]System Statistics:[/bold cyan]")
+            console.print(f"  Collection: [green]{collection.name}[/green]")
+            console.print(f"  Total chunks: [green]{collection.count()}[/green]")
+            console.print(f"  BM25 trained: [green]{len(corpus) > 0}[/green]")
+            console.print(f"  Dokumen: [green]{DOCUMENTS_DIR}[/green]\n")
             continue
 
-        with console.status("[bold cyan]Thinking...[/bold cyan]"):
+        if question.lower() == "config":
+            console.print(f"\n[bold cyan]Configuration:[/bold cyan]")
+            console.print(f"  Provider: [green]{LLM_PROVIDER}[/green]")
+            console.print(f"  Hybrid Search: [green]{HYBRID_SEARCH_ENABLED}[/green]")
+            console.print(f"  Reranker: [green]{RERANKING_ENABLED}[/green] ({RERANKER_MODEL})")
+            console.print(f"  Query Rewriting: [green]{QUERY_REWRITING_ENABLED}[/green]")
+            console.print(f"  Table Parsing: [green]{TABLE_PARSING_ENABLED}[/green]\n")
+            continue
+
+        with console.status("[bold cyan]Processing... (rewrite → search → rerank → generate → validate)"):
             result = chain.query(question)
 
         console.print("\n[bold magenta]AI:[/bold magenta]")
         console.print(Markdown(result["answer"]))
 
+        if result.get("rewritten_query") and result["rewritten_query"] != question:
+            console.print(f"\n[dim]Query rewritten: {result['rewritten_query']}[/dim]")
+
         validation = result["validation"]
         if validation["valid"]:
             console.print(
-                f"\n[green]Citation valid: {validation['citation_count']} source(s) referenced[/green]"
+                f"[green]✓ Citation valid: {validation['citation_count']} source(s) referenced[/green]"
             )
         else:
             console.print(
-                f"\n[yellow]Citation warning: {validation['citation_count']} source(s) found[/yellow]"
+                f"[yellow]⚠ Citation warning: {validation['citation_count']} source(s) found[/yellow]"
             )
 
         if result["attempts"] > 1:
-            console.print(f"[dim]Answer generated in {result['attempts']} attempts (citation enforced)[/dim]")
+            console.print(f"[dim]Generated in {result['attempts']} attempt(s)[/dim]")
 
         console.print()
 
@@ -119,7 +154,12 @@ def main():
             ingest_command(ingestor)
             return
         elif command == "query":
-            chain = RAGChain(ingestor.get_retriever())
+            vectorstore = ingestor.get_vectorstore()
+            corpus, metadata = ingestor.get_bm25_data()
+            bm25 = BM25Retriever(corpus, metadata)
+            hybrid = HybridRetriever(vectorstore, bm25)
+            reranker = Reranker(RERANKER_MODEL)
+            chain = RAGChain(hybrid, reranker)
             query_command(chain, ingestor)
             return
         else:
@@ -141,7 +181,12 @@ def main():
         ingest_command(ingestor)
         console.print("\n[dim]Run 'python main.py query' to start asking questions.[/dim]")
     else:
-        chain = RAGChain(ingestor.get_retriever())
+        vectorstore = ingestor.get_vectorstore()
+        corpus, metadata = ingestor.get_bm25_data()
+        bm25 = BM25Retriever(corpus, metadata)
+        hybrid = HybridRetriever(vectorstore, bm25)
+        reranker = Reranker(RERANKER_MODEL)
+        chain = RAGChain(hybrid, reranker)
         query_command(chain, ingestor)
 
 

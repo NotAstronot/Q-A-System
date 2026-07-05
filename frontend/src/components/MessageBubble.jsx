@@ -41,6 +41,14 @@ export default function MessageBubble({ message }) {
           </div>
         )}
 
+        {!isUser && message.rewritten_query && message.rewritten_query !== message.content && (
+          <div className="mt-2 px-1">
+            <p className="text-xs text-gray-400 italic">
+              Query diperluas: "{message.rewritten_query}"
+            </p>
+          </div>
+        )}
+
         {!isUser && message.attempts > 1 && (
           <p className="text-xs text-gray-400 mt-1 px-1">
             Dibuat dalam {message.attempts} percobaan (sitasi diperkuat)

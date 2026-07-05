@@ -1,13 +1,16 @@
 # Environment variables (secrets)
 .env
 
-# API (sensitive endpoints)
-api.py
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Generated vector store
 chroma_db/
