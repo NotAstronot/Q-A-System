@@ -1,26 +1,30 @@
 import useStore from '../store'
 import { MessageSquare, Upload, BarChart3, FileText } from 'lucide-react'
-
-const navItems = [
-  { id: 'chat', label: 'Tanya Jawab', icon: MessageSquare },
-  { id: 'upload', label: 'Upload Dokumen', icon: Upload },
-  { id: 'stats', label: 'Statistik', icon: BarChart3 },
-]
+import LanguageToggle from './LanguageToggle'
 
 export default function Sidebar() {
-  const { activePage, setActivePage, documents } = useStore()
+  const { activePage, setActivePage, documents, tr } = useStore()
+
+  const navItems = [
+    { id: 'chat', label: tr('nav.chat'), icon: MessageSquare },
+    { id: 'upload', label: tr('nav.upload'), icon: Upload },
+    { id: 'stats', label: tr('nav.stats'), icon: BarChart3 },
+  ]
 
   return (
     <aside className="w-64 bg-gray-900 text-white flex flex-col">
       <div className="p-5 border-b border-gray-700">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-lg">
-            QA
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-lg">
+              QA
+            </div>
+            <div>
+              <h2 className="font-semibold text-sm">{tr('sidebar.title')}</h2>
+              <p className="text-xs text-gray-400">{tr('sidebar.subtitle')}</p>
+            </div>
           </div>
-          <div>
-            <h2 className="font-semibold text-sm">Internal QA</h2>
-            <p className="text-xs text-gray-400">System</p>
-          </div>
+          <LanguageToggle />
         </div>
       </div>
 
@@ -42,7 +46,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-3 border-t border-gray-700">
-        <p className="text-xs text-gray-500 mb-2 px-2">Dokumen ({documents.length})</p>
+        <p className="text-xs text-gray-500 mb-2 px-2">{tr('sidebar.documents')} ({documents.length})</p>
         <div className="max-h-40 overflow-y-auto scrollbar-thin space-y-1">
           {documents.map((doc) => (
             <div
@@ -54,7 +58,7 @@ export default function Sidebar() {
             </div>
           ))}
           {documents.length === 0 && (
-            <p className="text-xs text-gray-600 px-2">Belum ada dokumen</p>
+            <p className="text-xs text-gray-600 px-2">{tr('sidebar.no_docs')}</p>
           )}
         </div>
       </div>

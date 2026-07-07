@@ -5,7 +5,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-reac
 export default function UploadForm() {
   const [dragActive, setDragActive] = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
-  const { uploadFile, isUploading, documents } = useStore()
+  const { uploadFile, isUploading, documents, tr } = useStore()
 
   const handleUpload = async (file) => {
     setUploadResult(null)
@@ -61,18 +61,18 @@ export default function UploadForm() {
         {isUploading ? (
           <div className="flex flex-col items-center">
             <Loader2 size={48} className="text-blue-500 animate-spin mb-4" />
-            <p className="text-gray-600 font-medium">Mengunggah dokumen...</p>
+            <p className="text-gray-600 font-medium">{tr('upload.uploading')}</p>
           </div>
         ) : (
           <>
             <Upload size={48} className="mx-auto text-gray-400 mb-4" />
             <p className="text-gray-700 font-medium mb-2">
-              Seret & lepas file PDF ke sini
+              {tr('upload.dragdrop')}
             </p>
-            <p className="text-sm text-gray-500 mb-4">atau</p>
+            <p className="text-sm text-gray-500 mb-4">{tr('upload.or')}</p>
             <label className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer">
               <FileText size={16} />
-              Pilih File PDF
+              {tr('upload.select')}
               <input
                 type="file"
                 accept=".pdf"
@@ -80,7 +80,7 @@ export default function UploadForm() {
                 className="hidden"
               />
             </label>
-            <p className="text-xs text-gray-400 mt-4">Maksimal ukuran file: 10MB</p>
+            <p className="text-xs text-gray-400 mt-4">{tr('upload.max_size')}</p>
           </>
         )}
       </div>
@@ -95,9 +95,9 @@ export default function UploadForm() {
             <>
               <CheckCircle size={20} className="text-green-500 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-green-700 font-medium text-sm">Upload berhasil!</p>
+                <p className="text-green-700 font-medium text-sm">{tr('upload.success_title')}</p>
                 <p className="text-green-600 text-xs mt-1">
-                  {uploadResult.filename} — {uploadResult.chunks_created} chunks dibuat
+                  {tr('upload.success_detail', { name: uploadResult.filename, n: uploadResult.chunks_created })}
                 </p>
               </div>
             </>
@@ -105,7 +105,7 @@ export default function UploadForm() {
             <>
               <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-red-700 font-medium text-sm">Upload gagal</p>
+                <p className="text-red-700 font-medium text-sm">{tr('upload.fail_title')}</p>
                 <p className="text-red-600 text-xs mt-1">{uploadResult.error}</p>
               </div>
             </>
@@ -116,7 +116,7 @@ export default function UploadForm() {
       {documents.length > 0 && (
         <div className="mt-8">
           <h3 className="text-sm font-medium text-gray-700 mb-3">
-            Dokumen yang sudah di-ingest ({documents.length})
+            {tr('upload.ingested_title')} ({documents.length})
           </h3>
           <div className="space-y-2">
             {documents.map((doc) => (

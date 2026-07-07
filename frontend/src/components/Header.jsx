@@ -1,13 +1,13 @@
 import useStore from '../store'
 
-const titles = {
-  chat: 'Tanya Jawab',
-  upload: 'Upload Dokumen',
-  stats: 'Statistik',
-}
-
 export default function Header() {
-  const { activePage, features } = useStore()
+  const { activePage, tr, features } = useStore()
+
+  const pageTitle = {
+    chat: tr('header.chat'),
+    upload: tr('header.upload'),
+    stats: tr('header.stats'),
+  }
 
   const featureLabels = []
   if (features?.hybrid_search) featureLabels.push('Hybrid')
@@ -19,7 +19,7 @@ export default function Header() {
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
       <h1 className="text-xl font-semibold text-gray-800">
-        {titles[activePage]}
+        {pageTitle[activePage]}
       </h1>
       <div className="flex items-center gap-2">
         {features && (

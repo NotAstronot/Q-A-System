@@ -1,8 +1,42 @@
 import ReactMarkdown from 'react-markdown'
+import useStore from '../store'
 import SourceCard from './SourceCard'
 import { User, Bot } from 'lucide-react'
 
+function isSafeUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
+}
+
+function LinkRenderer({ href, children }) {
+  if (!href || !isSafeUrl(href)) {
+    return <span className="text-gray-600">{children}</span>
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-600 underline hover:text-blue-800"
+    >
+      {children}
+    </a>
+  )
+}
+
+function ImageRenderer({ src, alt }) {
+  if (!src || !isSafeUrl(src)) {
+    return null
+  }
+  return <img src={src} alt={alt || ''} className="max-w-full rounded" loading="lazy" />
+}
+
 export default function MessageBubble({ message }) {
+  const { tr } = useStore()
   const isUser = message.role === 'user'
 
   return (
@@ -25,14 +59,21 @@ export default function MessageBubble({ message }) {
             <p>{message.content}</p>
           ) : (
             <div className="prose prose-sm prose-gray max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
+              <ReactMarkdown
+                components={{
+                  a: LinkRenderer,
+                  img: ImageRenderer,
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
             </div>
           )}
         </div>
 
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="mt-2 space-y-1">
-            <p className="text-xs text-gray-400 px-1">Sumber:</p>
+            <p className="text-xs text-gray-400 px-1">{tr('chat.sources')}</p>
             <div className="flex flex-wrap gap-1">
               {message.sources.map((source, i) => (
                 <SourceCard key={i} source={source} />
@@ -44,14 +85,14 @@ export default function MessageBubble({ message }) {
         {!isUser && message.rewritten_query && message.rewritten_query !== message.content && (
           <div className="mt-2 px-1">
             <p className="text-xs text-gray-400 italic">
-              Query diperluas: "{message.rewritten_query}"
+              {tr('chat.rewritten')} &ldquo;{message.rewritten_query}&rdquo;
             </p>
           </div>
         )}
 
         {!isUser && message.attempts > 1 && (
           <p className="text-xs text-gray-400 mt-1 px-1">
-            Dibuat dalam {message.attempts} percobaan (sitasi diperkuat)
+            {tr('chat.attempts', { n: message.attempts })}
           </p>
         )}
       </div>

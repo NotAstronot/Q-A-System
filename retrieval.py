@@ -2,6 +2,8 @@
 
 import re
 import pickle
+import logging
+import threading
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -21,6 +23,8 @@ from config import (
     CHROMA_PERSIST_DIR,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _tokenize(text: str) -> List[str]:
     """Simple whitespace + lowercase tokenizer."""
@@ -37,7 +41,6 @@ class BM25Retriever:
         self.bm25 = BM25Okapi(tokenized) if tokenized else None
 
     def retrieve(self, query: str, k: int = TOP_K_RETRIEVAL) -> List[Tuple[int, float]]:
-        """Return list of (index, score) tuples sorted by relevance."""
         if not self.bm25 or not self.corpus:
             return []
         tokenized_query = _tokenize(query)
@@ -62,22 +65,17 @@ class HybridRetriever:
         return score
 
     def retrieve(self, query: str, k: int = TOP_K_RETRIEVAL) -> List[Document]:
-        """Hybrid search: dense + sparse with RRF fusion. Returns parent-expanded docs."""
+        """Hybrid search: dense + sparse with RRF fusion."""
         corpus = self.bm25_retriever.corpus
         doc_meta = self.bm25_retriever.doc_metadata
 
-        # 1. Dense retrieval
         dense_pairs = self.vectorstore.similarity_search_with_score(query, k=k)
         dense_docs = [doc for doc, _ in dense_pairs]
 
-        # 2. Sparse retrieval
         sparse_pairs = self.bm25_retriever.retrieve(query, k=k)
         sparse_indices = {idx: rank for rank, (idx, _) in enumerate(sparse_pairs)}
 
-        # 3. Build pooled doc list with RRF scores
         scored_docs: List[Tuple[Document, float]] = []
-
-        # Track which corpus indices we've seen
         seen_indices: set = set()
 
         for rank, doc in enumerate(dense_docs):
@@ -87,7 +85,6 @@ class HybridRetriever:
             scored_docs.append((doc, rrf))
             seen_indices.add(rank)
 
-        # Add sparse-only results (not returned by dense)
         for corpus_idx, _ in sparse_pairs:
             if corpus_idx not in seen_indices and corpus_idx < len(corpus):
                 text = corpus[corpus_idx]
@@ -98,10 +95,8 @@ class HybridRetriever:
                 scored_docs.append((doc, rrf))
                 seen_indices.add(corpus_idx)
 
-        # 4. Sort by RRF score
         scored_docs.sort(key=lambda x: x[1], reverse=True)
 
-        # 5. Expand child → parent content
         expanded = []
         for doc, _ in scored_docs[:k]:
             parent_content = doc.metadata.get("parent_content", "")
@@ -117,19 +112,43 @@ class HybridRetriever:
 
 
 class Reranker:
-    """Cross-Encoder reranker to refine retrieved documents."""
+    """Cross-Encoder reranker with lazy loading and GPU support."""
 
     def __init__(self, model_name: str = RERANKER_MODEL):
         self.model = None
         self.model_name = model_name
+        self._lock = threading.Lock()
+        self._loaded = False
         self._load_path = Path(CHROMA_PERSIST_DIR) / "reranker_loaded.flag"
 
+    def preload(self):
+        """Preload model in background thread to speed up first query."""
+        if self._loaded or not RERANKING_ENABLED:
+            return
+        t = threading.Thread(target=self._lazy_load, daemon=True)
+        t.start()
+
     def _lazy_load(self):
-        if self.model is None:
-            if not RERANKING_ENABLED:
+        if self.model is not None:
+            return
+        with self._lock:
+            if self.model is not None:
                 return
-            from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(self.model_name)
+            if not RERANKING_ENABLED:
+                self._loaded = True
+                return
+            try:
+                from sentence_transformers import CrossEncoder
+                logger.info(f"Loading reranker model: {self.model_name}")
+                self.model = CrossEncoder(
+                    self.model_name,
+                    device="cpu",
+                )
+                self._loaded = True
+                logger.info("Reranker model loaded")
+            except Exception as e:
+                logger.warning(f"Failed to load reranker: {e}")
+                self._loaded = True
 
     def rerank(self, query: str, documents: List[Document], top_k: int = TOP_K_RERANKED) -> List[Document]:
         if not documents or not RERANKING_ENABLED:
@@ -139,8 +158,12 @@ class Reranker:
         if self.model is None:
             return documents[:top_k]
 
-        pairs = [[query, doc.page_content] for doc in documents]
-        scores = self.model.predict(pairs, show_progress_bar=False)
-        scored = list(zip(documents, scores))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [doc for doc, _ in scored[:top_k]]
+        try:
+            pairs = [[query, doc.page_content] for doc in documents]
+            scores = self.model.predict(pairs, show_progress_bar=False)
+            scored = list(zip(documents, scores))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [doc for doc, _ in scored[:top_k]]
+        except Exception as e:
+            logger.warning(f"Reranker failed, returning unranked: {e}")
+            return documents[:top_k]

@@ -17,6 +17,8 @@ chroma_db/
 
 # User documents (potentially sensitive)
 documents/
+Readme.md
+
 
 # IDE
 .vscode/
@@ -24,6 +26,7 @@ documents/
 
 # Logs
 *.log
+logs/
 
 # OS
 Thumbs.db

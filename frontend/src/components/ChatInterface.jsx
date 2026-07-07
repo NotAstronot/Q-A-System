@@ -5,7 +5,7 @@ import { Send, Loader2 } from 'lucide-react'
 
 export default function ChatInterface() {
   const [input, setInput] = useState('')
-  const { messages, isLoading, sendMessage, clearMessages } = useStore()
+  const { messages, isLoading, sendMessage, clearMessages, tr } = useStore()
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -29,10 +29,9 @@ export default function ChatInterface() {
             <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-4">
               <Send className="text-blue-500" size={28} />
             </div>
-            <h3 className="text-lg font-medium text-gray-700 mb-2">Mulai Bertanya</h3>
+            <h3 className="text-lg font-medium text-gray-700 mb-2">{tr('chat.empty_title')}</h3>
             <p className="text-sm text-gray-500 max-w-md">
-              Ajukan pertanyaan tentang dokumen internal perusahaan.
-              Sistem akan menjawab berdasarkan dokumen yang tersedia.
+              {tr('chat.empty_desc')}
             </p>
           </div>
         )}
@@ -44,7 +43,7 @@ export default function ChatInterface() {
         {isLoading && (
           <div className="flex items-center gap-2 text-gray-500 text-sm pl-2">
             <Loader2 size={16} className="animate-spin" />
-            <span>Memproses jawaban...</span>
+            <span>{tr('chat.processing')}</span>
           </div>
         )}
 
@@ -58,7 +57,7 @@ export default function ChatInterface() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ketik pertanyaan Anda..."
+            placeholder={tr('chat.placeholder')}
             disabled={isLoading}
             className="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400"
           />
@@ -72,7 +71,7 @@ export default function ChatInterface() {
             ) : (
               <Send size={16} />
             )}
-            Kirim
+            {tr('chat.send')}
           </button>
         </form>
         {messages.length > 0 && (
@@ -80,7 +79,7 @@ export default function ChatInterface() {
             onClick={clearMessages}
             className="mt-2 text-xs text-gray-400 hover:text-gray-600"
           >
-            Hapus percakapan
+            {tr('chat.clear')}
           </button>
         )}
       </div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { queryDocuments, uploadDocument, getStats, getDocuments, getFeatures } from './api'
+import { t } from './i18n'
 
 const useStore = create((set, get) => ({
   messages: [],
@@ -10,8 +11,13 @@ const useStore = create((set, get) => ({
   isUploading: false,
   error: null,
   activePage: 'chat',
+  lang: 'id',
 
   setActivePage: (page) => set({ activePage: page }),
+
+  setLang: (lang) => set({ lang }),
+
+  tr: (key, params = {}) => t(key, get().lang, params),
 
   sendMessage: async (question) => {
     const userMessage = { id: crypto.randomUUID(), role: 'user', content: question }
@@ -37,10 +43,11 @@ const useStore = create((set, get) => ({
         isLoading: false,
       }))
     } catch (err) {
+      const lang = get().lang
       const errorMessage = {
         id: crypto.randomUUID(),
         role: 'ai',
-        content: `Maaf, terjadi kesalahan: ${err.message}`,
+        content: `${t('chat.error_prefix', lang)} ${err.message}`,
         sources: [],
         validation: { valid: false, citation_count: 0 },
         attempts: 0,

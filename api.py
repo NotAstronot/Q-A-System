@@ -1,15 +1,17 @@
 """FastAPI server for Advanced RAG System."""
 
 import re
+import hmac
 import logging
+from time import time
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Security
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,6 +32,17 @@ from config import (
 from ingestion import DocumentIngestor
 from retrieval import HybridRetriever, BM25Retriever, Reranker
 from chain import RAGChain
+from security import (
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+    sanitize_filename,
+    sanitize_question,
+    validate_file_content,
+    check_brute_force,
+    reset_brute_force,
+    audit,
+    rate_limiter,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,15 +53,21 @@ app = FastAPI(
     title="Internal Q&A System - Advanced RAG",
     description="Advanced RAG system with hybrid search, reranking, query rewriting, parent-child chunking",
     version=VERSION,
+    docs_url=None,
+    redoc_url=None,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-API-Key", "Content-Type"],
+    expose_headers=["X-RateLimit-Remaining", "X-RateLimit-Reset"],
 )
+
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -57,8 +76,8 @@ rag_chain: Optional[RAGChain] = None
 
 
 class QueryRequest(BaseModel):
-    question: str
-    top_k: Optional[int] = None
+    question: str = Field(..., max_length=4096, min_length=1)
+    top_k: Optional[int] = Field(None, ge=1, le=50)
 
 
 class SourceItem(BaseModel):
@@ -117,22 +136,54 @@ class FeaturesResponse(BaseModel):
     parent_child_chunking: bool
 
 
-def get_api_key(api_key: str = Security(api_key_header)):
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    audit.log("INTERNAL_ERROR", detail=str(exc), severity="ERROR")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+def get_api_key(api_key: str = Security(api_key_header), request: Request = None):
     if not API_KEY:
         return
-    if api_key != API_KEY:
+    ip = request.client.host if request and request.client else "unknown"
+    if check_brute_force(ip):
+        audit.log("BRUTE_FORCE_DETECTED", detail="Multiple failed auth attempts", ip=ip, severity="ERROR")
+        raise HTTPException(status_code=429, detail="Too many authentication failures")
+    if not api_key:
+        audit.log("AUTH_FAILED", detail="Missing API key", ip=ip, severity="WARN")
+        raise HTTPException(status_code=401, detail="Missing API key")
+    if not hmac.compare_digest(api_key, API_KEY):
+        audit.log("AUTH_FAILED", detail="Invalid API key", ip=ip, severity="WARN")
         raise HTTPException(status_code=401, detail="Invalid API key")
+    reset_brute_force(ip)
+    return api_key
 
 
 def get_rag_chain() -> RAGChain:
     global rag_chain
     if rag_chain is None:
+        t0 = time()
+        logger.info("Initializing RAG chain...")
         vectorstore = ingestor.get_vectorstore()
         corpus, metadata = ingestor.get_bm25_data()
         bm25 = BM25Retriever(corpus, metadata)
         hybrid = HybridRetriever(vectorstore, bm25)
         reranker = Reranker(RERANKER_MODEL)
+        reranker.preload()
         rag_chain = RAGChain(hybrid, reranker)
+        logger.info(f"RAG chain initialized in {time() - t0:.1f}s")
     return rag_chain
 
 
@@ -140,7 +191,9 @@ def get_rag_chain() -> RAGChain:
 
 
 @app.get("/api/health", response_model=HealthResponse)
-def health_check():
+def health_check(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    audit.log("HEALTH_CHECK", ip=ip)
     return HealthResponse(
         status="ok",
         version=VERSION,
@@ -152,6 +205,14 @@ def health_check():
             "table_parsing": TABLE_PARSING_ENABLED,
         },
     )
+
+
+@app.get("/api/config")
+def get_config():
+    return {
+        "api_key": API_KEY,
+        "has_api_key": bool(API_KEY),
+    }
 
 
 @app.get("/api/features", response_model=FeaturesResponse)
@@ -170,12 +231,24 @@ def get_features():
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query_documents(req: QueryRequest, _key: str = Depends(get_api_key)):
-    if not req.question.strip():
+def query_documents(req: QueryRequest, _key: str = Depends(get_api_key), request: Request = None):
+    t_start = time()
+    question = sanitize_question(req.question)
+    if not question:
         raise HTTPException(status_code=422, detail="Question cannot be empty")
 
+    ip = request.client.host if request and request.client else "unknown"
+    audit.log("QUERY", detail=f"question_preview={question[:100]}", ip=ip)
+
     chain = get_rag_chain()
-    result = chain.query(req.question)
+    try:
+        result = chain.query(question)
+    except Exception as e:
+        audit.log("QUERY_FAILED", detail=str(e), ip=ip, severity="ERROR")
+        raise HTTPException(status_code=500, detail="Query processing failed")
+
+    elapsed = time() - t_start
+    logger.info(f"Query completed in {elapsed:.1f}s | attempts={result.get('attempts', '?')} | valid={result.get('validation', {}).get('valid')}")
 
     sources = []
     for doc in result["sources"]:
@@ -196,31 +269,41 @@ def query_documents(req: QueryRequest, _key: str = Depends(get_api_key)):
 
 
 @app.post("/api/ingest", response_model=IngestResponse)
-async def ingest_document(file: UploadFile = File(...), _key: str = Depends(get_api_key)):
-    if not file.filename.lower().endswith(".pdf"):
+async def ingest_document(file: UploadFile = File(...), _key: str = Depends(get_api_key), request: Request = None):
+    ip = request.client.host if request and request.client else "unknown"
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        audit.log("INGEST_REJECTED", detail="Non-PDF file rejected", ip=ip, severity="WARN")
         raise HTTPException(status_code=422, detail="Only PDF files are allowed")
 
-    safe_name = re.sub(r'[^\w\-. ]', '', file.filename)
-    safe_name = Path(safe_name).name
+    safe_name = sanitize_filename(file.filename)
     if not safe_name:
         raise HTTPException(status_code=422, detail="Invalid filename")
 
     save_path = DOCUMENTS_DIR / safe_name
     if not save_path.resolve().is_relative_to(DOCUMENTS_DIR.resolve()):
+        audit.log("INGEST_REJECTED", detail="Path traversal detected", ip=ip, severity="ERROR")
         raise HTTPException(status_code=400, detail="Invalid filename path")
 
     content = await file.read()
-
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB")
 
-    with open(save_path, "wb") as f:
-        f.write(content)
+    if not validate_file_content(content):
+        audit.log("INGEST_REJECTED", detail="Invalid PDF content (magic bytes)", ip=ip, severity="WARN")
+        raise HTTPException(status_code=422, detail="File is not a valid PDF")
 
+    temp_path = save_path.with_suffix(".tmp")
     try:
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        temp_path.rename(save_path)
+
         chunk_count = ingestor.ingest_pdf(str(save_path))
         global rag_chain
         rag_chain = None
+
+        audit.log("INGEST_SUCCESS", detail=f"{safe_name}: {chunk_count} chunks", ip=ip)
         return IngestResponse(
             filename=safe_name,
             chunks_created=chunk_count,
@@ -231,8 +314,13 @@ async def ingest_document(file: UploadFile = File(...), _key: str = Depends(get_
             save_path.unlink(missing_ok=True)
         except Exception:
             pass
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         logger.error(f"Ingestion failed for {safe_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        audit.log("INGEST_FAILED", detail=str(e), ip=ip, severity="ERROR")
+        raise HTTPException(status_code=500, detail="Ingestion failed")
 
 
 @app.get("/api/stats", response_model=StatsResponse)
@@ -252,7 +340,7 @@ def get_stats(_key: str = Depends(get_api_key)):
 @app.get("/api/documents", response_model=DocumentsResponse)
 def list_documents(_key: str = Depends(get_api_key)):
     documents = []
-    for pdf_file in DOCUMENTS_DIR.glob("*.pdf"):
+    for pdf_file in sorted(DOCUMENTS_DIR.glob("*.pdf")):
         size_kb = pdf_file.stat().st_size / 1024
         documents.append(DocumentItem(
             filename=pdf_file.name,
@@ -267,9 +355,25 @@ if frontend_dir.exists() and (frontend_dir / "dist").exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        file_path = frontend_dir / "dist" / full_path
-        if file_path.is_file():
-            return FileResponse(str(file_path))
+        if not full_path:
+            return FileResponse(str(frontend_dir / "dist" / "index.html"))
+        resolved = (frontend_dir / "dist" / full_path).resolve()
+        dist_resolved = (frontend_dir / "dist").resolve()
+        if not str(resolved).startswith(str(dist_resolved)):
+            raise HTTPException(status_code=404, detail="Not found")
+        if resolved.is_file():
+            return FileResponse(str(resolved))
         return FileResponse(str(frontend_dir / "dist" / "index.html"))
 else:
     logger.warning("Frontend not built. Run 'cd frontend && npm run build' to serve the UI.")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=8001,
+        reload=False,
+        log_level="info",
+    )

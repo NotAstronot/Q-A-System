@@ -1,5 +1,19 @@
 const API_BASE = '/api'
 
+let _apiKey = null
+
+async function initApiKey() {
+  try {
+    const res = await fetch(`${API_BASE}/config`)
+    const data = await res.json()
+    if (data.has_api_key && data.api_key) {
+      _apiKey = data.api_key
+    }
+  } catch {
+    // backend will handle missing key gracefully if not configured
+  }
+}
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`
   const config = {
@@ -7,8 +21,8 @@ async function request(endpoint, options = {}) {
     ...options,
   }
 
-  if (import.meta.env.VITE_API_KEY) {
-    config.headers['X-API-Key'] = import.meta.env.VITE_API_KEY
+  if (_apiKey) {
+    config.headers['X-API-Key'] = _apiKey
   }
 
   if (config.body && !(config.body instanceof FormData)) {
@@ -18,8 +32,12 @@ async function request(endpoint, options = {}) {
   const res = await fetch(url, config)
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(error.detail || `HTTP ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    try {
+      const error = await res.json()
+      if (error.detail) detail = error.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
   }
 
   return res.json()
@@ -56,3 +74,5 @@ export async function healthCheck() {
 export async function getFeatures() {
   return request('/features')
 }
+
+export { initApiKey }

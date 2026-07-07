@@ -1,7 +1,12 @@
 """Advanced RAG chain: query rewriting, hybrid retrieval, reranking, strict citation."""
 
+import os
 import re
-from typing import Dict, Any, List
+import hashlib
+import logging
+import threading
+from time import time
+from typing import Dict, Any, List, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -19,8 +24,55 @@ from config import (
     MIN_CITATION_COUNT,
     QUERY_REWRITING_ENABLED,
     TOP_K_RERANKED,
+    LLM_TIMEOUT,
+    CACHE_TTL,
 )
 from retrieval import HybridRetriever, Reranker
+
+logger = logging.getLogger(__name__)
+
+
+
+
+# ── Response Cache ──────────────────────────────────────────────
+
+class ResponseCache:
+    """Simple LRU cache with TTL for RAG responses."""
+
+    def __init__(self, maxsize: int = 128, ttl: int = CACHE_TTL):
+        self._cache: Dict[str, tuple] = {}
+        self._maxsize = maxsize
+        self._ttl = ttl
+        self._lock = threading.Lock()
+
+    def _key(self, question: str) -> str:
+        return hashlib.sha256(question.strip().lower().encode()).hexdigest()
+
+    def get(self, question: str) -> Optional[Dict[str, Any]]:
+        key = self._key(question)
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry:
+                result, ts = entry
+                if time() - ts < self._ttl:
+                    return result
+                del self._cache[key]
+        return None
+
+    def set(self, question: str, result: Dict[str, Any]):
+        key = self._key(question)
+        with self._lock:
+            if len(self._cache) >= self._maxsize:
+                oldest = min(self._cache.keys(), key=lambda k: self._cache[k][1])
+                del self._cache[oldest]
+            self._cache[key] = (result, time())
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+
+
+cache = ResponseCache()
 
 
 # ── Query Rewriter ──────────────────────────────────────────────
@@ -52,7 +104,8 @@ Pertanyaan yang diperbaiki:"""
             chain = prompt | self.llm | StrOutputParser()
             rewritten = chain.invoke({"question": question})
             return rewritten.strip()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Query rewriting failed (using original): {e}")
             return question
 
 
@@ -79,7 +132,6 @@ class CitationValidator:
     ]
 
     def validate(self, response: str, source_docs: List[Document]) -> Dict[str, Any]:
-        """Validate citation presence, quality, and anti-hallucination."""
         has_citation = self._check_citation_exists(response)
         cited_files = self._extract_cited_files(response)
         all_source_files = [doc.metadata.get("filename", "unknown") for doc in source_docs]
@@ -129,28 +181,31 @@ class CitationValidator:
 # ── LLM Factory ─────────────────────────────────────────────────
 
 def _create_llm():
-    """Create LLM based on configured provider."""
+    """Create LLM with timeout to prevent hanging."""
+    kwargs = dict(
+        temperature=0.1,
+        max_tokens=2048,
+        request_timeout=LLM_TIMEOUT,
+    )
     if LLM_PROVIDER == "ollama":
         return ChatOpenAI(
             model=OLLAMA_MODEL,
             base_url=f"{OLLAMA_BASE_URL}/v1",
-            api_key="ollama",
-            temperature=0.1,
-            max_tokens=2048,
+            api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+            **kwargs,
         )
     return ChatOpenAI(
         model=LLM_MODEL,
         base_url=LLM_BASE_URL,
         api_key=OPENROUTER_API_KEY,
-        temperature=0.1,
-        max_tokens=2048,
+        **kwargs,
     )
 
 
 # ── RAG Chain ───────────────────────────────────────────────────
 
 class RAGChain:
-    """Full Advanced RAG pipeline: rewrite → hybrid search → rerank → generate → validate."""
+    """Full Advanced RAG pipeline: rewrite -> hybrid search -> rerank -> generate -> validate."""
 
     SYSTEM_PROMPT = """Anda adalah asisten AI yang menjawab pertanyaan HANYA berdasarkan dokumen yang diberikan.
 
@@ -198,7 +253,6 @@ Jawab dengan selalu menyertakan sumber/sitasi dokumen."""
         )
 
     def _format_docs(self, docs: List[Document]) -> str:
-        """Format documents with source and page metadata."""
         formatted = []
         for doc in docs:
             source = doc.metadata.get("filename", "unknown")
@@ -210,47 +264,78 @@ Jawab dengan selalu menyertakan sumber/sitasi dokumen."""
         return "\n\n---\n\n".join(formatted)
 
     def query(self, question: str) -> Dict[str, Any]:
-        """Full RAG pipeline with citation enforcement."""
-        MAX_ATTEMPTS = 3
+        """Full RAG pipeline with caching and timeout protection."""
+        MAX_ATTEMPTS = 2
+        PIPELINE_TIMEOUT = 55
 
-        # Step 1: Query Rewriting
+        cached = cache.get(question)
+        if cached:
+            return cached
+
         rewritten = self.rewriter.rewrite(question)
 
+        last_response = None
+        last_validation = None
+
         for attempt in range(MAX_ATTEMPTS):
-            # Step 2: Hybrid retrieval
-            raw_docs = self.hybrid_retriever.retrieve(rewritten, k=TOP_K_RERANKED * 4)
+            try:
+                raw_docs = self.hybrid_retriever.retrieve(rewritten, k=TOP_K_RERANKED * 4)
+                reranked_docs = self.reranker.rerank(rewritten, raw_docs, top_k=TOP_K_RERANKED)
 
-            # Step 3: Rerank
-            reranked_docs = self.reranker.rerank(rewritten, raw_docs, top_k=TOP_K_RERANKED)
+                if not reranked_docs:
+                    result = {
+                        "answer": "Tidak ada dokumen yang relevan ditemukan untuk pertanyaan ini.",
+                        "rewritten_query": rewritten,
+                        "sources": [],
+                        "validation": {"valid": True, "citation_count": 0, "has_citation": False, "cited_files": [], "missing_sources": [], "is_uncertain": False},
+                        "attempts": 1,
+                    }
+                    cache.set(question, result)
+                    return result
 
-            # Step 4: Format context
-            context = self._format_docs(reranked_docs)
+                context = self._format_docs(reranked_docs)
 
-            # Step 5: Generate with LLM
-            current_question = (
-                f"Jawaban sebelumnya kurang lengkap dalam menyertakan sitasi. "
-                f"Silakan jawab ulang pertanyaan berikut dengan format sitasi yang benar:\n"
-                f"[Sumber: nama_file.pdf, Halaman X]\n\n"
-                f"Pertanyaan: {rewritten}"
-                if attempt == MAX_ATTEMPTS - 1
-                else rewritten
-            )
+                current_question = (
+                    f"Jawaban Anda sebelumnya kurang lengkap dalam menyertakan sitasi. "
+                    f"PASTIKAN setiap fakta memiliki sitasi [Sumber: nama_file.pdf, Halaman X].\n"
+                    f"Pertanyaan: {rewritten}"
+                    if attempt > 0
+                    else rewritten
+                )
 
-            raw_response = self.chain.invoke({
-                "context": context,
-                "question": current_question,
-            })
+                raw_response = self.chain.invoke({
+                    "context": context,
+                    "question": current_question,
+                })
 
-            # Step 6: Validate
-            validation = self.validator.validate(raw_response, reranked_docs)
+                if not raw_response or not raw_response.strip():
+                    continue
 
-            if validation["valid"]:
-                break
+                last_response = raw_response
+                last_validation = self.validator.validate(raw_response, reranked_docs)
 
-        return {
-            "answer": raw_response,
+                if last_validation["valid"]:
+                    result = {
+                        "answer": raw_response,
+                        "rewritten_query": rewritten,
+                        "sources": reranked_docs,
+                        "validation": last_validation,
+                        "attempts": attempt + 1,
+                    }
+                    cache.set(question, result)
+                    return result
+
+            except Exception as e:
+                logger.error(f"Pipeline attempt {attempt + 1} failed: {e}")
+                if attempt == MAX_ATTEMPTS - 1:
+                    raise
+
+        result = {
+            "answer": last_response or "Maaf, tidak dapat menghasilkan jawaban. Silakan coba lagi.",
             "rewritten_query": rewritten,
-            "sources": reranked_docs,
-            "validation": validation,
-            "attempts": attempt + 1,
+            "sources": reranked_docs if reranked_docs else [],
+            "validation": last_validation or {"valid": False, "citation_count": 0, "has_citation": False, "cited_files": [], "missing_sources": [], "is_uncertain": False},
+            "attempts": MAX_ATTEMPTS,
         }
+        cache.set(question, result)
+        return result

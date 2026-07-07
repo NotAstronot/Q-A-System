@@ -7,7 +7,7 @@ import UploadForm from './components/UploadForm'
 import StatsPanel from './components/StatsPanel'
 
 export default function App() {
-  const { activePage, fetchDocuments, fetchStats, fetchFeatures, error, clearError } = useStore()
+  const { activePage, fetchDocuments, fetchStats, fetchFeatures, error, clearError, tr } = useStore()
 
   useEffect(() => {
     fetchDocuments()
@@ -24,7 +24,7 @@ export default function App() {
           <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
             <span className="text-red-700 text-sm">{error}</span>
             <button onClick={clearError} className="text-red-500 hover:text-red-700 text-sm font-medium">
-              Tutup
+              {tr('error.close')}
             </button>
           </div>
         )}
