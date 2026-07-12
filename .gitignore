@@ -19,6 +19,9 @@ chroma_db/
 documents/
 Readme.md
 
+# Provider-specific setup documentation
+9ROUTER_SETUP.md
+
 
 # IDE
 .vscode/

@@ -27,9 +27,15 @@ export default function Header() {
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
               features.provider === 'ollama'
                 ? 'bg-green-100 text-green-700'
+                : features.provider === '9router'
+                ? 'bg-purple-100 text-purple-700'
                 : 'bg-blue-100 text-blue-700'
             }`}>
-              {features.provider === 'ollama' ? 'Ollama' : 'OpenRouter'}
+              {features.provider === 'ollama'
+                ? 'Ollama'
+                : features.provider === '9router'
+                ? '9Router'
+                : 'OpenRouter'}
             </span>
             <span className="text-xs text-gray-400 font-mono">
               {features.model}

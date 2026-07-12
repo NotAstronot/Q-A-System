@@ -20,6 +20,9 @@ from config import (
     LLM_BASE_URL,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    NINEROUTER_API_KEY,
+    NINEROUTER_BASE_URL,
+    NINEROUTER_MODEL,
     LLM_PROVIDER,
     MIN_CITATION_COUNT,
     QUERY_REWRITING_ENABLED,
@@ -194,6 +197,14 @@ def _create_llm():
             api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
             **kwargs,
         )
+    elif LLM_PROVIDER == "9router":
+        return ChatOpenAI(
+            model=NINEROUTER_MODEL,
+            base_url=NINEROUTER_BASE_URL,
+            api_key=NINEROUTER_API_KEY,
+            **kwargs,
+        )
+    # Default: OpenRouter
     return ChatOpenAI(
         model=LLM_MODEL,
         base_url=LLM_BASE_URL,

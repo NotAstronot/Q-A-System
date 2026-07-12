@@ -28,6 +28,7 @@ from config import (
     TABLE_PARSING_ENABLED,
     OLLAMA_MODEL,
     LLM_MODEL,
+    NINEROUTER_MODEL,
 )
 from ingestion import DocumentIngestor
 from retrieval import HybridRetriever, BM25Retriever, Reranker
@@ -217,7 +218,13 @@ def get_config():
 
 @app.get("/api/features", response_model=FeaturesResponse)
 def get_features():
-    model = OLLAMA_MODEL if LLM_PROVIDER == "ollama" else LLM_MODEL
+    if LLM_PROVIDER == "ollama":
+        model = OLLAMA_MODEL
+    elif LLM_PROVIDER == "9router":
+        model = NINEROUTER_MODEL
+    else:
+        model = LLM_MODEL
+
     return FeaturesResponse(
         hybrid_search=HYBRID_SEARCH_ENABLED,
         reranking=RERANKING_ENABLED,

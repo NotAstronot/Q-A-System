@@ -67,7 +67,11 @@ export default function StatsPanel() {
             <span className="text-sm text-gray-500">{tr('stats.provider')}</span>
           </div>
           <p className="text-xl font-bold text-gray-800 break-all">
-            {stats?.provider === 'ollama' ? 'Ollama' : 'OpenRouter'}
+            {stats?.provider === 'ollama'
+              ? 'Ollama'
+              : stats?.provider === '9router'
+              ? '9Router'
+              : 'OpenRouter'}
           </p>
         </div>
       </div>
@@ -103,7 +107,15 @@ export default function StatsPanel() {
           </div>
           <div className="flex justify-between py-2">
             <span className="text-gray-500">{tr('stats.provider')}</span>
-            <span className="text-gray-800 font-medium">{stats?.provider || '-'}</span>
+            <span className="text-gray-800 font-medium">
+              {stats?.provider === 'ollama'
+                ? 'Ollama'
+                : stats?.provider === '9router'
+                ? '9Router'
+                : stats?.provider === 'openrouter'
+                ? 'OpenRouter'
+                : stats?.provider || '-'}
+            </span>
           </div>
         </div>
       </div>

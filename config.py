@@ -19,6 +19,11 @@ LOGS_DIR.mkdir(exist_ok=True)
 # ── LLM Provider ──────────────────────────────────────────────
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter")
 
+# 9router Proxy
+NINEROUTER_API_KEY = os.getenv("NINEROUTER_API_KEY", "")
+NINEROUTER_BASE_URL = os.getenv("NINEROUTER_BASE_URL", "https://api.9router.com/v1")
+NINEROUTER_MODEL = os.getenv("NINEROUTER_MODEL", "gpt-4-turbo")
+
 # OpenRouter
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "mimollm/mimo-v2.5-free")
