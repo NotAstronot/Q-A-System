@@ -33,6 +33,11 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 
+# ── Vector Database ───────────────────────────────────────────
+VECTOR_DB_TYPE = os.getenv("VECTOR_DB_TYPE", "chromadb")  # or "qdrant"
+QDRANT_PATH = os.getenv("QDRANT_PATH", str(BASE_DIR / "qdrant_db"))
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "internal_docs")
+
 # ── ChromaDB ──────────────────────────────────────────────────
 CHROMA_COLLECTION_NAME = "internal_docs"
 CHROMA_PERSIST_DIR = str(CHROMA_DB_DIR)
@@ -75,6 +80,21 @@ CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_STR.split(",") if o.strip()]
 # ── Performance ────────────────────────────────────────────────
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))
 CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
+
+# ── Performance Optimizations ──────────────────────────────────
+# Redis Caching
+REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_CACHE_TTL = int(os.getenv("REDIS_CACHE_TTL", "3600"))
+
+# GPU Acceleration
+USE_GPU = os.getenv("USE_GPU", "false").lower() == "true"
+USE_FP16 = os.getenv("USE_FP16", "false").lower() == "true"
+
+# Response Streaming
+ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", "false").lower() == "true"
 
 # ── Rate Limiting ─────────────────────────────────────────────
 RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "60"))
